@@ -1,7 +1,7 @@
 ---
 name: acli-jira
 description: This skill should be used when the user asks to "run acli jira commands", "create a Jira issue", "search Jira issues", "manage Jira projects", "transition Jira status", "check jira issue", "consistent with jira issue", or mentions ACLI, Atlassian CLI, Jira CLI, Jira issue keys (e.g. KAN-1, PROJ-123), or jira workitem/project/board/sprint operations via the command line.
-version: 1.1.0
+version: 1.2.0
 ---
 
 # ACLI Jira Command Reference
@@ -160,19 +160,179 @@ acli jira workitem search --jql "project = PROJ" --web
 
 ### Comments
 
+> **Important: markdown does not render.** Jira comments posted via `--body` or a plain-text `--body-file` render as literal text — `**bold**` stays as asterisks, `# heading` stays as a hash. For any rich formatting (headings, bullet/ordered lists, code, links, bold, inline code) you must post in **ADF (Atlassian Document Format)**. See the ADF section below.
+
 ```bash
-# Add a comment
+# Add a plain-text comment
 acli jira workitem comment create --key "PROJ-123" --body "Ready for review"
 
-# List comments
-acli jira workitem comment list --key "PROJ-123"
+# Add a comment from a plain-text file
+acli jira workitem comment create --key "PROJ-123" --body-file notes.txt
 
-# Update a comment
+# Add a comment with ADF (rich formatting)
+#   Note: `create` has no dedicated --body-adf flag. --body-file accepts
+#   either plain text or ADF JSON — acli auto-detects.
+acli jira workitem comment create --key "PROJ-123" --body-file comment.adf.json
+
+# List comments (use --json to find the comment ID for update/delete)
+acli jira workitem comment list --key "PROJ-123"
+acli jira workitem comment list --key "PROJ-123" --json | jq '.comments[] | {id, author}'
+
+# Update a comment (plain text)
 acli jira workitem comment update --key "PROJ-123" --id "10001" --body "Updated comment"
+
+# Update a comment with ADF
+#   Note: `update` has a dedicated --body-adf flag (distinct from create).
+acli jira workitem comment update --key "PROJ-123" --id "10001" --body-adf comment.adf.json
 
 # Delete a comment
 acli jira workitem comment delete --key "PROJ-123" --id "10001"
 ```
+
+**Flag inconsistency to remember:**
+- `comment create` — no `--body-adf` flag. Pass ADF via `--body-file` (auto-detected) or inline via `--body`.
+- `comment update` — has a dedicated `--body-adf <file>` flag for ADF JSON.
+
+### ADF (Atlassian Document Format)
+
+ADF is Atlassian's JSON-based rich-text representation — the native format the Jira cloud editor saves in. Use it when you need formatting in comments, descriptions, or any rich-text field. The Jira REST API and `acli` both accept ADF.
+
+#### Minimal document structure
+
+```json
+{
+  "version": 1,
+  "type": "doc",
+  "content": [
+    { "type": "paragraph", "content": [
+      { "type": "text", "text": "Hello world" }
+    ]}
+  ]
+}
+```
+
+A document is a `doc` node containing block-level nodes (paragraph, heading, bulletList, etc.). Block nodes contain inline nodes (text, mention, emoji). Inline `text` nodes can carry `marks` (formatting like `strong`, `code`, `link`).
+
+#### Common block nodes
+
+```json
+// Paragraph
+{ "type": "paragraph", "content": [ { "type": "text", "text": "Body." } ] }
+
+// Heading (levels 1–6)
+{ "type": "heading", "attrs": { "level": 3 },
+  "content": [ { "type": "text", "text": "Section" } ] }
+
+// Bullet list
+{ "type": "bulletList", "content": [
+  { "type": "listItem", "content": [
+    { "type": "paragraph", "content": [ { "type": "text", "text": "Item" } ] }
+  ]}
+]}
+
+// Ordered list — same shape as bulletList, use "orderedList"
+
+// Code block
+{ "type": "codeBlock", "attrs": { "language": "php" },
+  "content": [ { "type": "text", "text": "echo 'hi';" } ] }
+
+// Blockquote
+{ "type": "blockquote", "content": [
+  { "type": "paragraph", "content": [ { "type": "text", "text": "Quoted." } ] }
+]}
+
+// Rule (horizontal line)
+{ "type": "rule" }
+```
+
+#### Inline marks (text formatting)
+
+Apply to `text` nodes via the `marks` array. Each mark is `{ "type": "<name>" }` optionally with `attrs`.
+
+```json
+// Bold
+{ "type": "text", "text": "bold bit", "marks": [ { "type": "strong" } ] }
+
+// Italic
+{ "type": "text", "text": "em bit", "marks": [ { "type": "em" } ] }
+
+// Inline code (monospace)
+{ "type": "text", "text": "variable_name", "marks": [ { "type": "code" } ] }
+
+// Link
+{ "type": "text", "text": "click here",
+  "marks": [ { "type": "link", "attrs": { "href": "https://example.com" } } ] }
+
+// Combined (bold + code)
+{ "type": "text", "text": "API_KEY",
+  "marks": [ { "type": "strong" }, { "type": "code" } ] }
+```
+
+#### Full example — comment with headings, lists, code, links
+
+```json
+{
+  "version": 1,
+  "type": "doc",
+  "content": [
+    { "type": "paragraph", "content": [
+      { "type": "text", "text": "Handover note. See " },
+      { "type": "text", "text": "PR #41117",
+        "marks": [ { "type": "link", "attrs": { "href": "https://github.com/org/repo/pull/41117" } } ] },
+      { "type": "text", "text": "." }
+    ]},
+    { "type": "heading", "attrs": { "level": 3 }, "content": [
+      { "type": "text", "text": "What you need to do" }
+    ]},
+    { "type": "bulletList", "content": [
+      { "type": "listItem", "content": [
+        { "type": "paragraph", "content": [
+          { "type": "text", "text": "Add " },
+          { "type": "text", "text": "render_helper()", "marks": [ { "type": "code" } ] },
+          { "type": "text", "text": " in " },
+          { "type": "text", "text": "inc/helpers.php", "marks": [ { "type": "code" } ] }
+        ]}
+      ]}
+    ]}
+  ]
+}
+```
+
+#### Nested lists
+
+To nest a list inside a list item, the `listItem` contains an extra `bulletList` / `orderedList` as a sibling to its `paragraph`:
+
+```json
+{ "type": "listItem", "content": [
+  { "type": "paragraph", "content": [ { "type": "text", "text": "Outer" } ] },
+  { "type": "bulletList", "content": [
+    { "type": "listItem", "content": [
+      { "type": "paragraph", "content": [ { "type": "text", "text": "Inner" } ] }
+    ]}
+  ]}
+]}
+```
+
+#### Practical workflow for updating a comment
+
+```bash
+# 1. Find the comment ID
+acli jira workitem comment list --key "PROJ-123" --json | jq '.comments[] | {id, author, body}'
+
+# 2. Build ADF in a file (e.g. /tmp/comment.adf.json)
+
+# 3. Update with --body-adf (not --body-file for update with ADF)
+acli jira workitem comment update --key "PROJ-123" --id 983057 --body-adf /tmp/comment.adf.json
+```
+
+#### ADF gotchas
+
+- **`text` nodes cannot be empty.** A `text` node with `"text": ""` will be rejected. Skip the node entirely instead.
+- **`paragraph` can be empty** (no `content`) to produce a blank line.
+- **Marks order matters visually but not semantically** — all combinations render the same formatting.
+- **Nested code blocks are not supported** inside lists in the standard Jira cloud ADF — put code blocks at the top level or use inline `code` marks inside list items.
+- **Unknown node types** cause the whole comment to fail silently (or render as a literal box). Stick to documented node types.
+- **Descriptions and comments** accept ADF, but some older Jira fields may not — test in preprod before relying on it.
 
 ### Clone
 
